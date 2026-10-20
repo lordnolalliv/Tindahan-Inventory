@@ -1,5 +1,6 @@
 import express from 'express';
 import sqlite3 from 'sqlite3';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,6 +79,18 @@ const get = (sql, params = []) => new Promise((resolve, reject) => {
   });
 });
 
+const hashPassword = (password, salt = crypto.randomBytes(16).toString('hex')) => new Promise((resolve, reject) => {
+  crypto.scrypt(password, salt, 64, (error, derivedKey) => {
+    if (error) {
+      reject(error);
+      return;
+    }
+    resolve({ salt, hash: derivedKey.toString('hex') });
+  });
+});
+
+const createToken = () => crypto.randomBytes(32).toString('hex');
+
 const ensureDatabase = async () => {
   await run(`
     CREATE TABLE IF NOT EXISTS products (
@@ -102,6 +115,36 @@ const ensureDatabase = async () => {
       name TEXT NOT NULL UNIQUE
     )
   `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      passwordHash TEXT NOT NULL,
+      passwordSalt TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'owner',
+      createdAt TEXT NOT NULL
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      userId INTEGER NOT NULL,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  const userCount = await get('SELECT COUNT(*) AS count FROM users');
+  if ((userCount?.count || 0) === 0) {
+    const credentials = await hashPassword('admin123');
+    await run(
+      'INSERT INTO users (name, email, passwordHash, passwordSalt, role, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
+      ['Maria Reyes', 'maria@tindahan.local', credentials.hash, credentials.salt, 'owner', new Date().toISOString()]
+    );
+  }
 
   const productColumns = await all('PRAGMA table_info(products)');
   if (!productColumns.some((column) => column.name === 'expirationDate')) {
@@ -141,6 +184,108 @@ app.get('/', (_req, res) => {
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
+
+const publicUser = (user) => ({ id: user.id, name: user.name, email: user.email, role: user.role });
+
+app.post('/api/auth/login', async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password are required.' });
+  }
+
+  try {
+    const user = await get('SELECT * FROM users WHERE email = ?', [email]);
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid email or password.' });
+    }
+
+    const credentials = await hashPassword(password, user.passwordSalt);
+    if (credentials.hash !== user.passwordHash) {
+      return res.status(401).json({ message: 'Invalid email or password.' });
+    }
+
+    const token = createToken();
+    await run('INSERT INTO sessions (token, userId, createdAt) VALUES (?, ?, ?)', [token, user.id, new Date().toISOString()]);
+    res.json({ token, user: publicUser(user) });
+  } catch (error) {
+    res.status(500).json({ message: 'Unable to log in.', error: error.message });
+  }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+
+  if (!name || !email || password.length < 6) {
+    return res.status(400).json({ message: 'Name, email, and a password of at least 6 characters are required.' });
+  }
+
+  try {
+    const existing = await get('SELECT id FROM users WHERE email = ?', [email]);
+    if (existing) {
+      return res.status(409).json({ message: 'An account with this email already exists.' });
+    }
+
+    const credentials = await hashPassword(password);
+    const result = await run(
+      'INSERT INTO users (name, email, passwordHash, passwordSalt, role, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
+      [name, email, credentials.hash, credentials.salt, 'staff', new Date().toISOString()]
+    );
+    const user = await get('SELECT * FROM users WHERE id = ?', [result.id]);
+    const token = createToken();
+    await run('INSERT INTO sessions (token, userId, createdAt) VALUES (?, ?, ?)', [token, user.id, new Date().toISOString()]);
+    res.status(201).json({ token, user: publicUser(user) });
+  } catch (error) {
+    res.status(500).json({ message: 'Unable to create account.', error: error.message });
+  }
+});
+
+app.get('/api/auth/session', async (req, res) => {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) {
+    return res.status(401).json({ message: 'Authentication required.' });
+  }
+
+  try {
+    const user = await get('SELECT users.* FROM users JOIN sessions ON sessions.userId = users.id WHERE sessions.token = ?', [token]);
+    if (!user) {
+      return res.status(401).json({ message: 'Session expired.' });
+    }
+    res.json({ user: publicUser(user) });
+  } catch (error) {
+    res.status(500).json({ message: 'Unable to verify session.', error: error.message });
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (token) await run('DELETE FROM sessions WHERE token = ?', [token]);
+  res.json({ message: 'Signed out.' });
+});
+
+const requireAuth = async (req, res, next) => {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) {
+    return res.status(401).json({ message: 'Authentication required.' });
+  }
+
+  try {
+    const user = await get('SELECT users.* FROM users JOIN sessions ON sessions.userId = users.id WHERE sessions.token = ?', [token]);
+    if (!user) {
+      return res.status(401).json({ message: 'Session expired.' });
+    }
+    req.user = publicUser(user);
+    next();
+  } catch (error) {
+    res.status(500).json({ message: 'Unable to authenticate request.', error: error.message });
+  }
+};
+
+app.use('/api/products', requireAuth);
+app.use('/api/categories', requireAuth);
 
 app.get('/api/products', async (_req, res) => {
   try {

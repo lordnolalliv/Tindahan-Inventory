@@ -20,6 +20,8 @@ let activeStockFilter = 'all'
 let sortByValue = false
 let query = ''
 let editingId = null
+let authToken = localStorage.getItem('tindahan-auth-token')
+let currentUser = null
 
 const peso = value => `₱${Number(value).toFixed(2)}`
 const getReorderLevel = product => Math.max(0, Number(product?.reorderLevel ?? 10))
@@ -42,6 +44,7 @@ const fetchJson = async (url, options = {}) => {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       ...(options.headers || {}),
     },
   })
@@ -50,6 +53,11 @@ const fetchJson = async (url, options = {}) => {
   const payload = text ? JSON.parse(text) : null
 
   if (!response.ok) {
+    if (response.status === 401 && authToken) {
+      authToken = null
+      localStorage.removeItem('tindahan-auth-token')
+      showAuthGate('Your session has expired. Please log in again.')
+    }
     throw new Error(payload?.message || 'Request failed.')
   }
 
@@ -87,6 +95,23 @@ async function refreshInventory() {
 }
 
 document.querySelector('#app').innerHTML = `
+  <section class="auth-gate" id="auth-gate">
+    <div class="auth-card">
+      <div class="auth-brand"><span class="brand-mark">T</span><span>Tindahan<span class="brand-dot">.</span></span></div>
+      <p class="eyebrow">STORE MANAGEMENT</p>
+      <h1 id="auth-title">Welcome back</h1>
+      <p class="auth-copy" id="auth-copy">Log in to manage your store inventory.</p>
+      <form id="login-form" class="login-form">
+        <label id="auth-name-field" hidden>Full name<input name="name" autocomplete="name" placeholder="e.g. Maria Reyes" /></label>
+        <label>Email<input name="email" type="email" autocomplete="email" value="maria@tindahan.local" required /></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required /></label>
+        <p class="auth-error" id="auth-error" role="alert"></p>
+        <button class="primary-button" type="submit">Log in</button>
+      </form>
+      <button class="auth-switch" id="auth-toggle" type="button">Create a new account</button>
+      <p class="demo-hint" id="demo-hint">Demo account: maria@tindahan.local / admin123</p>
+    </div>
+  </section>
   <div class="shell">
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark">T</span><span>Tindahan<span class="brand-dot">.</span></span></div>
@@ -96,24 +121,121 @@ document.querySelector('#app').innerHTML = `
         <a class="nav-item" href="#sales" data-view="sales"><span class="nav-icon">◒</span>Sales</a>
         <a class="nav-item" href="#reports" data-view="reports"><span class="nav-icon">⌁</span>Reports</a>
       </nav>
-      <div class="sidebar-footer"><div class="help-card"><span class="help-icon">?</span><div><strong>Need a hand?</strong><p>We're here to help.</p></div><span>›</span></div><div class="user"><span class="user-avatar">MR</span><span><strong>Maria Reyes</strong><small>Store owner</small></span><span class="more">•••</span></div></div>
+      <div class="sidebar-footer"><div class="help-card"><span class="help-icon">?</span><div><strong>Need a hand?</strong><p>We're here to help.</p></div><span>›</span></div><div class="user"><span class="user-avatar" id="sidebar-user-initials">MR</span><span><strong id="sidebar-user-name">Maria Reyes</strong><small id="sidebar-user-role">Store owner</small></span><span class="more">•••</span></div></div>
     </aside>
     <main class="main-content" id="inventory">
-      <header class="topbar"><div class="crumbs"><span>Store</span><span>/</span><strong>Inventory</strong></div><div class="top-actions"><span class="date-label">Monday, September 22, 2026</span><button class="icon-button" title="Notifications">♢<i></i></button><button class="profile-button">MR <span>⌄</span></button></div></header>
-      <section class="page-heading"><div><p class="eyebrow">GOOD MORNING, MARIA</p><h1>Inventory Overview</h1><p class="subtitle">Keep an eye on your stock and know what needs restocking.</p></div><button class="primary-button" id="add-product"><span>＋</span> Add product</button></section>
+      <header class="topbar"><div class="crumbs"><span>Store</span><span>/</span><strong>Inventory</strong></div><div class="top-actions"><span class="date-label">Monday, September 22, 2026</span><button class="icon-button" title="Notifications">♢<i></i></button><div class="profile-menu-wrap"><button class="profile-button" id="profile-button" aria-expanded="false">MR <span>⌄</span></button><div class="profile-menu" id="profile-menu" hidden><strong id="profile-menu-name">Maria Reyes</strong><small id="profile-menu-email">maria@tindahan.local</small><button class="menu-signout" id="menu-signout" type="button">↪ Sign out</button></div></div></div></header>
+      <section class="page-heading"><div><p class="eyebrow">GOOD MORNING, MARIA</p><h1>Inventory Overview</h1><p class="subtitle">Keep an eye on your stock and know what needs restocking.</p></div></section>
       <section class="stats-grid" aria-label="Inventory summary"><button class="stat-card" data-summary="all"><div class="stat-top"><span class="stat-label">Total products</span><span class="stat-icon lavender">▦</span></div><strong id="total-products">0</strong><small><span class="trend">↗ 12%</span> from last month</small></button><button class="stat-card" data-summary="value"><div class="stat-top"><span class="stat-label">Inventory value</span><span class="stat-icon mint">₱</span></div><strong id="inventory-value">₱0.00</strong><small><span class="trend">↗ 8.4%</span> from last month</small></button><button class="stat-card" data-summary="low"><div class="stat-top"><span class="stat-label">Low stock items</span><span class="stat-icon peach">!</span></div><strong id="low-stock">0</strong><small><span class="warning-copy">Needs your attention</span></small></button><button class="stat-card" data-summary="out"><div class="stat-top"><span class="stat-label">Out of stock</span><span class="stat-icon rose">×</span></div><strong id="out-of-stock">0</strong><small><span class="muted-copy">Restock to keep selling</span></small></button></section>
       <section class="insights-row"><div class="insight-card"><span>Sales this week</span><strong id="total-sales">0</strong></div><div class="insight-card"><span>Best seller</span><strong id="best-seller">N/A</strong></div></section>
-      <section class="inventory-section view-panel" data-view="inventory"><div class="section-heading"><div><h2>All products <span id="product-count">0</span></h2><p>Manage the products on your shelves.</p></div><div class="section-actions"><button class="export-button" id="add-category">＋ Category</button><button class="export-button" id="export-products">⇩ Export</button></div></div><div class="toolbar"><label class="search-box"><span>⌕</span><input id="search" type="search" placeholder="Search products..." /></label><div class="filters" id="category-filters"></div><button class="filter-icon" title="Filter products">≡</button></div><div class="table-wrap"><table><thead><tr><th>PRODUCT</th><th>CATEGORY</th><th>PRICE</th><th>IN STOCK</th><th>STATUS</th><th>EXPIRATION</th><th>LAST UPDATED</th><th></th></tr></thead><tbody id="product-rows"></tbody></table><div class="empty-state" id="empty-state" hidden><div>⌕</div><h3>No products found</h3><p>Try a different search or add a new product.</p></div></div><div class="table-footer"><span id="showing-count">Showing 0 products</span><div class="pagination"><button disabled>‹</button><button class="current">1</button><button disabled>›</button></div></div></section>
+      <section class="inventory-section view-panel" data-view="inventory"><div class="section-heading"><div><h2>All products <span id="product-count">0</span></h2><p>Manage the products on your shelves.</p></div><div class="section-actions"><button class="primary-button" id="add-product"><span>＋</span> Add product</button><button class="export-button" id="add-category">＋ Category</button><button class="export-button" id="export-products">⇩ Export</button></div></div><div class="toolbar"><label class="search-box"><span>⌕</span><input id="search" type="search" placeholder="Search products..." /></label><div class="filters" id="category-filters"></div><button class="filter-icon" title="Filter products">≡</button></div><div class="table-wrap"><table><thead><tr><th>PRODUCT</th><th>CATEGORY</th><th>PRICE</th><th>IN STOCK</th><th>STATUS</th><th>EXPIRATION</th><th>LAST UPDATED</th><th></th></tr></thead><tbody id="product-rows"></tbody></table><div class="empty-state" id="empty-state" hidden><div>⌕</div><h3>No products found</h3><p>Try a different search or add a new product.</p></div></div><div class="table-footer"><span id="showing-count">Showing 0 products</span><div class="pagination"><button disabled>‹</button><button class="current">1</button><button disabled>›</button></div></div></section>
       <section class="view-panel hidden" data-view="sales" id="sales"><div class="panel-shell"><div class="panel-header"><div><p class="eyebrow">SALES MONITOR</p><h2>Sales overview</h2></div></div><div class="stats-grid sales-grid" aria-label="Sales summary"><div class="stat-card"><div class="stat-top"><span class="stat-label">Total revenue</span><span class="stat-icon mint">₱</span></div><strong id="sales-total-revenue">₱0.00</strong><small><span class="trend">↗ Weekly</span> performance</small></div><div class="stat-card"><div class="stat-top"><span class="stat-label">Units sold</span><span class="stat-icon lavender">◔</span></div><strong id="sales-units">0</strong><small><span class="trend">↗ This week</span> trend</small></div><div class="stat-card"><div class="stat-top"><span class="stat-label">Average sale</span><span class="stat-icon peach">=</span></div><strong id="sales-average">₱0.00</strong><small><span class="warning-copy">Per unit</span> average</small></div><div class="stat-card"><div class="stat-top"><span class="stat-label">Top item</span><span class="stat-icon rose">★</span></div><strong id="sales-top-item">N/A</strong><small><span class="muted-copy">Best seller</span></small></div></div><div class="sales-layout"><div class="panel-card"><h3>Recent sales</h3><table class="mini-table"><thead><tr><th>ITEM</th><th>UNITS</th><th>REVENUE</th></tr></thead><tbody id="sales-table-body"></tbody></table></div><div class="panel-card"><h3>Top selling products</h3><ul id="sales-product-list" class="report-list"></ul></div></div></div></section>
       <section class="view-panel hidden" data-view="reports" id="reports"><div class="panel-shell"><div class="panel-header"><div><p class="eyebrow">REPORTS</p><h2>Store performance</h2></div></div><div class="stats-grid sales-grid" aria-label="Reports summary"><div class="stat-card"><div class="stat-top"><span class="stat-label">Inventory value</span><span class="stat-icon mint">₱</span></div><strong id="reports-inventory-value">₱0.00</strong><small><span class="trend">↗ Stock</span> value</small></div><div class="stat-card"><div class="stat-top"><span class="stat-label">Low stock</span><span class="stat-icon peach">!</span></div><strong id="reports-low-stock">0</strong><small><span class="warning-copy">Needs restock</span></small></div><div class="stat-card"><div class="stat-top"><span class="stat-label">Revenue</span><span class="stat-icon lavender">▣</span></div><strong id="reports-revenue">₱0.00</strong><small><span class="trend">↗ Sales</span> total</small></div><div class="stat-card"><div class="stat-top"><span class="stat-label">Restock alert</span><span class="stat-icon rose">◎</span></div><strong id="reports-alert-count">0</strong><small><span class="muted-copy">Watchlist</span></small></div></div><div class="sales-layout"><div class="panel-card"><h3>Best category performance</h3><ul id="report-category-list" class="report-list"></ul></div><div class="panel-card"><h3>Reorder watchlist</h3><ul id="report-watchlist" class="report-list"></ul></div></div></div></section>
     </main>
   </div>
-  <div class="modal-backdrop" id="modal" hidden><form class="modal" id="product-form"><div class="modal-head"><div><p class="eyebrow">INVENTORY ITEM</p><h2 id="modal-title">Add product</h2></div><button type="button" class="close-button" id="close-modal">×</button></div><label>Product name<input name="name" required placeholder="e.g. Lucky Me Pancit Canton" /></label><div class="form-grid"><label>Category<select name="category" id="product-category"></select></label><label>Supplier<input name="supplier" placeholder="Supplier name" /></label><label>Unit<input name="unit" required placeholder="pack" /></label><label>Price (₱)<input name="price" type="number" min="0" step="0.01" required /></label><label>In stock<input name="stock" type="number" min="0" step="1" required /></label><label>Reorder level<input name="reorderLevel" type="number" min="0" step="1" value="10" /></label><label>Expiration date<input name="expirationDate" type="date" /></label></div><div class="modal-actions"><button type="button" class="secondary-button" id="cancel-modal">Cancel</button><button class="primary-button" type="submit">Save product</button></div></form></div>
-  <div class="modal-backdrop" id="category-modal" hidden><form class="modal" id="category-form"><div class="modal-head"><div><p class="eyebrow">PRODUCT ORGANIZATION</p><h2>Add category</h2></div><button type="button" class="close-button" id="close-category-modal">×</button></div><label>Category name<input name="category" required maxlength="32" placeholder="e.g. Snacks" /></label><div class="category-manager"><p>Existing categories</p><div id="category-list"></div></div><div class="modal-actions"><button type="button" class="secondary-button" id="cancel-category-modal">Close</button><button class="primary-button" type="submit">Add category</button></div></form></div>
+  <div class="modal-backdrop" id="modal" hidden><form class="modal" id="product-form"><div class="modal-head"><div><p class="eyebrow">INVENTORY ITEM</p><h2 id="modal-title">Add product</h2></div><button type="button" class="close-button" id="close-modal">×</button></div><label>Product name<input name="name" required placeholder="e.g. Lucky Me Pancit Canton" /></label><div class="form-grid"><label>Category<select name="category" id="product-category"></select></label><label>Supplier<input name="supplier" placeholder="Supplier name" /></label><label>Unit<input name="unit" required placeholder="pack" /></label><label>Price (₱)<input name="price" type="number" min="0" step="0.01" required /></label><label>In stock<input name="stock" type="number" min="0" step="1" required /></label><label>Reorder level<input name="reorderLevel" type="number" min="0" step="1" value="10" /></label><label>Expiration date<input name="expirationDate" type="date" /></label></div><div class="modal-actions"><button type="button" class="secondary-button" id="cancel-modal">Cancel</button><button class="primary-button" id="product-submit" type="submit">Save product</button></div></form></div>
+  <div class="modal-backdrop" id="category-modal" hidden><form class="modal" id="category-form"><div class="modal-head"><div><p class="eyebrow">PRODUCT ORGANIZATION</p><h2>Add category</h2></div><button type="button" class="close-button" id="close-category-modal">×</button></div><label>Category name<input name="category" required maxlength="32" placeholder="e.g. Snacks" /></label><p class="form-error" id="category-error" role="alert"></p><div class="category-manager"><p>Existing categories</p><div id="category-list"></div></div><div class="modal-actions"><button type="button" class="secondary-button" id="cancel-category-modal">Close</button><button class="primary-button" type="submit">Add category</button></div></form></div>
 `
 
 const $ = selector => document.querySelector(selector)
 let activeView = 'inventory'
+let authMode = 'login'
+
+function showAuthGate(message = '') {
+  $('#auth-gate').classList.remove('hidden')
+  $('#auth-error').textContent = message
+}
+
+function hideAuthGate(user) {
+  currentUser = user
+  $('#auth-gate').classList.add('hidden')
+  const initials = user.name.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()
+  $('#profile-button').innerHTML = `${initials} <span>⌄</span>`
+  $('#profile-menu-name').textContent = user.name
+  $('#profile-menu-email').textContent = user.email
+  $('#sidebar-user-initials').textContent = initials
+  $('#sidebar-user-name').textContent = user.name
+  $('#sidebar-user-role').textContent = user.role === 'owner' ? 'Store owner' : 'Store staff'
+}
+
+$('#auth-toggle').addEventListener('click', () => {
+  authMode = authMode === 'login' ? 'register' : 'login'
+  const registering = authMode === 'register'
+  $('#auth-title').textContent = registering ? 'Create your account' : 'Welcome back'
+  $('#auth-copy').textContent = registering ? 'Set up an account to manage your store.' : 'Log in to manage your store inventory.'
+  $('#auth-name-field').hidden = !registering
+  $('#auth-name-field input').required = registering
+  $('#login-form button[type="submit"]').textContent = registering ? 'Create account' : 'Log in'
+  $('#auth-toggle').textContent = registering ? 'Back to log in' : 'Create a new account'
+  $('#demo-hint').hidden = registering
+  $('#auth-error').textContent = ''
+  $('#login-form input[name="name"]').value = ''
+  $('#login-form input[name="email"]').value = registering ? '' : 'maria@tindahan.local'
+  $('#login-form input[name="password"]').value = ''
+})
+
+$('#login-form').addEventListener('submit', async event => {
+  event.preventDefault()
+  const form = new FormData(event.currentTarget)
+  const button = event.currentTarget.querySelector('button')
+  button.disabled = true
+  $('#auth-error').textContent = ''
+
+  try {
+    const result = await fetchJson(`/api/auth/${authMode}`, {
+      method: 'POST',
+      body: JSON.stringify({ name: form.get('name'), email: form.get('email'), password: form.get('password') }),
+    })
+    authToken = result.token
+    localStorage.setItem('tindahan-auth-token', authToken)
+    hideAuthGate(result.user)
+    await refreshInventory()
+  } catch (error) {
+    $('#auth-error').textContent = error.message
+  } finally {
+    button.disabled = false
+  }
+})
+
+$('#profile-button').addEventListener('click', () => {
+  const menu = $('#profile-menu')
+  const isOpen = !menu.hidden
+  menu.hidden = isOpen
+  $('#profile-button').setAttribute('aria-expanded', String(!isOpen))
+})
+
+document.addEventListener('click', event => {
+  if (event.target.closest('.profile-menu-wrap')) return
+  $('#profile-menu').hidden = true
+  $('#profile-button').setAttribute('aria-expanded', 'false')
+})
+
+$('#menu-signout').addEventListener('click', async () => {
+  if (!window.confirm('Are you sure you want to sign out?')) return
+
+  await fetchJson('/api/auth/logout', { method: 'POST' }).catch(() => {})
+  authToken = null
+  currentUser = null
+  localStorage.removeItem('tindahan-auth-token')
+  $('#profile-menu').hidden = true
+  $('#profile-button').setAttribute('aria-expanded', 'false')
+  showAuthGate('')
+})
+
+async function initializeApp() {
+  if (!authToken) {
+    showAuthGate()
+    return
+  }
+
+  try {
+    const session = await fetchJson('/api/auth/session')
+    hideAuthGate(session.user)
+    await refreshInventory()
+  } catch {
+    showAuthGate('Please log in to continue.')
+  }
+}
 
 function updateLiveDate() {
   const dateLabel = document.querySelector('.date-label')
@@ -210,7 +332,7 @@ function render() {
   $('#product-category').innerHTML = categories.map(category => `<option>${category}</option>`).join('')
   $('#category-list').innerHTML = categories.map(category => {
     const productCount = products.filter(product => product.category === category).length
-    return `<div class="category-manager-row"><span>${category}<small>${productCount} product${productCount === 1 ? '' : 's'}</small></span><button type="button" class="delete-category" data-category-delete="${category}" ${productCount ? 'disabled title="Remove products from this category before deleting it"' : 'title="Delete category"'}>×</button></div>`
+    return `<div class="category-manager-row category-select-row" data-category-select="${category}" role="button" tabindex="0" title="View ${category} products"><span>${category}<small>${productCount} product${productCount === 1 ? '' : 's'}</small></span><button type="button" class="delete-category" data-category-delete="${category}" ${productCount ? 'disabled title="Remove products from this category before deleting it"' : 'title="Delete category"'}>×</button></div>`
   }).join('')
 
   $('#showing-count').textContent = `Showing ${visible.length} of ${products.length} products`
@@ -231,6 +353,7 @@ function render() {
 function openModal(product = null) {
   editingId = product?.id || null
   $('#modal-title').textContent = product ? 'Edit product' : 'Add product'
+  $('#product-submit').textContent = product ? 'Save changes' : 'Save product'
   const form = $('#product-form')
   form.reset()
   if (product) {
@@ -312,6 +435,7 @@ $('#modal').addEventListener('click', event => {
 
 $('#add-category').addEventListener('click', () => {
   $('#category-modal').hidden = false
+  $('#category-error').textContent = ''
   $('#category-form').elements.category.focus()
 })
 
@@ -327,7 +451,23 @@ $('#category-modal').addEventListener('click', event => {
   if (event.target.id === 'category-modal') event.currentTarget.hidden = true
 })
 
+function selectCategory(category) {
+  activeCategory = category
+  activeStockFilter = 'all'
+  sortByValue = false
+  $('#category-modal').hidden = true
+  activeView = 'inventory'
+  syncViewPanels()
+  render()
+}
+
 $('#category-list').addEventListener('click', async event => {
+  const categoryRow = event.target.closest('[data-category-select]')
+  if (categoryRow && !event.target.closest('[data-category-delete]')) {
+    selectCategory(categoryRow.dataset.categorySelect)
+    return
+  }
+
   const button = event.target.closest('[data-category-delete]')
   if (!button || button.disabled) return
 
@@ -345,12 +485,26 @@ $('#category-list').addEventListener('click', async event => {
   }
 })
 
+$('#category-list').addEventListener('keydown', event => {
+  const categoryRow = event.target.closest('[data-category-select]')
+  if (!categoryRow || event.target.closest('[data-category-delete]')) return
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  selectCategory(categoryRow.dataset.categorySelect)
+})
+
 $('#category-form').addEventListener('submit', async event => {
   event.preventDefault()
   const formData = new FormData(event.currentTarget)
   const name = String(formData.get('category') || '').trim()
 
-  if (!name || categories.some(category => category.toLowerCase() === name.toLowerCase())) {
+  if (!name) {
+    $('#category-error').textContent = 'Enter a category name.'
+    return
+  }
+
+  if (categories.some(category => category.toLowerCase() === name.toLowerCase())) {
+    $('#category-error').textContent = 'This category already exists.'
     return
   }
 
@@ -469,4 +623,4 @@ document.querySelectorAll('.nav-item').forEach(link => {
 
 updateLiveDate()
 setInterval(updateLiveDate, 1000)
-refreshInventory()
+initializeApp()
