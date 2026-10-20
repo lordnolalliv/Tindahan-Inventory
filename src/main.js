@@ -50,7 +50,14 @@ const fetchJson = async (url, options = {}) => {
   })
 
   const text = await response.text()
-  const payload = text ? JSON.parse(text) : null
+  let payload = null
+  if (text) {
+    try {
+      payload = JSON.parse(text)
+    } catch {
+      throw new Error(`The server returned an unexpected response (HTTP ${response.status}). Check the Vercel API deployment and database configuration.`)
+    }
+  }
 
   if (!response.ok) {
     if (response.status === 401 && authToken) {
@@ -103,13 +110,13 @@ document.querySelector('#app').innerHTML = `
       <p class="auth-copy" id="auth-copy">Log in to manage your store inventory.</p>
       <form id="login-form" class="login-form">
         <label id="auth-name-field" hidden>Full name<input name="name" autocomplete="name" placeholder="e.g. Maria Reyes" /></label>
-        <label>Email<input name="email" type="email" autocomplete="email" value="maria@tindahan.local" required /></label>
+        <label>Email<input name="email" type="email" autocomplete="email" value="${import.meta.env.DEV ? 'maria@tindahan.local' : ''}" required /></label>
         <label>Password<input name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required /></label>
         <p class="auth-error" id="auth-error" role="alert"></p>
         <button class="primary-button" type="submit">Log in</button>
       </form>
       <button class="auth-switch" id="auth-toggle" type="button">Create a new account</button>
-      <p class="demo-hint" id="demo-hint">Demo account: maria@tindahan.local / admin123</p>
+      <p class="demo-hint" id="demo-hint" ${import.meta.env.DEV ? '' : 'hidden'}>Local demo account: maria@tindahan.local / admin123</p>
     </div>
   </section>
   <div class="shell">
@@ -167,10 +174,10 @@ $('#auth-toggle').addEventListener('click', () => {
   $('#auth-name-field input').required = registering
   $('#login-form button[type="submit"]').textContent = registering ? 'Create account' : 'Log in'
   $('#auth-toggle').textContent = registering ? 'Back to log in' : 'Create a new account'
-  $('#demo-hint').hidden = registering
+  $('#demo-hint').hidden = registering || !import.meta.env.DEV
   $('#auth-error').textContent = ''
   $('#login-form input[name="name"]').value = ''
-  $('#login-form input[name="email"]').value = registering ? '' : 'maria@tindahan.local'
+  $('#login-form input[name="email"]').value = registering || !import.meta.env.DEV ? '' : 'maria@tindahan.local'
   $('#login-form input[name="password"]').value = ''
 })
 

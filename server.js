@@ -1,5 +1,5 @@
 import express from 'express';
-import sqlite3 from 'sqlite3';
+import pg from 'pg';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -10,19 +10,28 @@ const __dirname = path.dirname(__filename);
 const PORT = process.env.PORT || 3001;
 const dataDir = path.join(__dirname, 'data');
 const dbPath = path.join(dataDir, 'tindahan.db');
-const distDir = path.join(__dirname, 'dist');
+const publicDir = path.join(__dirname, 'public');
+const usePostgres = Boolean(process.env.DATABASE_URL);
+const { Pool } = pg;
 
-await fs.mkdir(dataDir, { recursive: true });
+if (process.env.VERCEL && !usePostgres) {
+  throw new Error('DATABASE_URL is required on Vercel. Configure your Neon connection string in Project Settings > Environment Variables.');
+}
+
+if (!usePostgres) await fs.mkdir(dataDir, { recursive: true });
 
 const app = express();
 app.use(express.json());
 
-const distExists = await fs.access(distDir).then(() => true).catch(() => false);
-if (distExists) {
-  app.use(express.static(distDir));
+const frontendExists = await fs.access(path.join(publicDir, 'index.html')).then(() => true).catch(() => false);
+if (frontendExists) {
+  app.use(express.static(publicDir));
 }
 
-const db = new sqlite3.Database(dbPath);
+const sqlite3 = usePostgres ? null : (await import('sqlite3')).default;
+const db = usePostgres
+  ? new Pool({ connectionString: process.env.DATABASE_URL, max: 1 })
+  : new sqlite3.Database(dbPath);
 
 const seedProducts = [
   { id: 1, name: 'Lucky Me Pancit Canton', category: 'Groceries', price: 15, stock: 42, unit: 'pack', updated: 'Today, 9:42 AM', icon: 'LM', tone: 'coral', supplier: 'Mila Foods', reorderLevel: 10, sold: 14 },
@@ -50,6 +59,14 @@ const toProduct = (row) => ({
 });
 
 const run = (sql, params = []) => new Promise((resolve, reject) => {
+  if (usePostgres) {
+    const query = normalizeSql(sql)
+    db.query(query, params)
+      .then((result) => resolve({ id: result.rows[0]?.id, changes: result.rowCount }))
+      .catch(reject)
+    return
+  }
+
   db.run(sql, params, function (err) {
     if (err) {
       reject(err);
@@ -60,6 +77,13 @@ const run = (sql, params = []) => new Promise((resolve, reject) => {
 });
 
 const all = (sql, params = []) => new Promise((resolve, reject) => {
+  if (usePostgres) {
+    db.query(normalizeSql(sql), params)
+      .then((result) => resolve(result.rows))
+      .catch(reject)
+    return
+  }
+
   db.all(sql, params, (err, rows) => {
     if (err) {
       reject(err);
@@ -70,6 +94,13 @@ const all = (sql, params = []) => new Promise((resolve, reject) => {
 });
 
 const get = (sql, params = []) => new Promise((resolve, reject) => {
+  if (usePostgres) {
+    db.query(normalizeSql(sql), params)
+      .then((result) => resolve(result.rows[0] || null))
+      .catch(reject)
+    return
+  }
+
   db.get(sql, params, (err, row) => {
     if (err) {
       reject(err);
@@ -78,6 +109,13 @@ const get = (sql, params = []) => new Promise((resolve, reject) => {
     resolve(row || null);
   });
 });
+
+function normalizeSql(sql) {
+  let parameterIndex = 0
+  return sql
+    .replace(/\b(reorderLevel|passwordHash|passwordSalt|createdAt|userId|expirationDate)\b/g, '"$1"')
+    .replace(/\?/g, () => `$${++parameterIndex}`)
+}
 
 const hashPassword = (password, salt = crypto.randomBytes(16).toString('hex')) => new Promise((resolve, reject) => {
   crypto.scrypt(password, salt, 64, (error, derivedKey) => {
@@ -92,9 +130,10 @@ const hashPassword = (password, salt = crypto.randomBytes(16).toString('hex')) =
 const createToken = () => crypto.randomBytes(32).toString('hex');
 
 const ensureDatabase = async () => {
+  const idType = usePostgres ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'
   await run(`
     CREATE TABLE IF NOT EXISTS products (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id ${idType},
       name TEXT NOT NULL,
       category TEXT NOT NULL,
       price REAL NOT NULL,
@@ -111,14 +150,14 @@ const ensureDatabase = async () => {
 
   await run(`
     CREATE TABLE IF NOT EXISTS categories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id ${idType},
       name TEXT NOT NULL UNIQUE
     )
   `);
 
   await run(`
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id ${idType},
       name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
       passwordHash TEXT NOT NULL,
@@ -138,7 +177,7 @@ const ensureDatabase = async () => {
   `);
 
   const userCount = await get('SELECT COUNT(*) AS count FROM users');
-  if ((userCount?.count || 0) === 0) {
+  if (!usePostgres && Number(userCount?.count || 0) === 0) {
     const credentials = await hashPassword('admin123');
     await run(
       'INSERT INTO users (name, email, passwordHash, passwordSalt, role, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
@@ -146,13 +185,17 @@ const ensureDatabase = async () => {
     );
   }
 
-  const productColumns = await all('PRAGMA table_info(products)');
-  if (!productColumns.some((column) => column.name === 'expirationDate')) {
+  if (usePostgres) {
+    await run('ALTER TABLE products ADD COLUMN IF NOT EXISTS expirationDate TEXT');
+  } else {
+    const productColumns = await all('PRAGMA table_info(products)');
+    if (!productColumns.some((column) => column.name === 'expirationDate')) {
     await run('ALTER TABLE products ADD COLUMN expirationDate TEXT');
+    }
   }
 
   const productCount = await get('SELECT COUNT(*) AS count FROM products');
-  if ((productCount?.count || 0) === 0) {
+  if (Number(productCount?.count || 0) === 0) {
     for (const product of seedProducts) {
       await run(
         `INSERT INTO products (name, category, price, stock, unit, supplier, reorderLevel, sold, updated, icon, tone) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -162,7 +205,7 @@ const ensureDatabase = async () => {
   }
 
   const categoriesCount = await get('SELECT COUNT(*) AS count FROM categories');
-  if ((categoriesCount?.count || 0) === 0) {
+  if (Number(categoriesCount?.count || 0) === 0) {
     const categoryNames = [...new Set(seedProducts.map((product) => product.category))];
     for (const name of categoryNames) {
       await run('INSERT INTO categories (name) VALUES (?)', [name]);
@@ -173,8 +216,8 @@ const ensureDatabase = async () => {
 await ensureDatabase();
 
 app.get('/', (_req, res) => {
-  if (distExists) {
-    res.sendFile(path.join(distDir, 'index.html'));
+  if (frontendExists) {
+    res.sendFile(path.join(publicDir, 'index.html'));
     return;
   }
 
@@ -230,9 +273,11 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     const credentials = await hashPassword(password);
+    const userCount = await get('SELECT COUNT(*) AS count FROM users');
+    const role = Number(userCount?.count || 0) === 0 ? 'owner' : 'staff';
     const result = await run(
-      'INSERT INTO users (name, email, passwordHash, passwordSalt, role, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
-      [name, email, credentials.hash, credentials.salt, 'staff', new Date().toISOString()]
+      'INSERT INTO users (name, email, passwordHash, passwordSalt, role, createdAt) VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
+      [name, email, credentials.hash, credentials.salt, role, new Date().toISOString()]
     );
     const user = await get('SELECT * FROM users WHERE id = ?', [result.id]);
     const token = createToken();
@@ -318,7 +363,7 @@ app.post('/api/categories', async (req, res) => {
       return res.status(200).json({ name: existing.name });
     }
 
-    const result = await run('INSERT INTO categories (name) VALUES (?)', [rawName]);
+    const result = await run('INSERT INTO categories (name) VALUES (?) RETURNING id', [rawName]);
     res.status(201).json({ id: result.id, name: rawName });
   } catch (error) {
     res.status(500).json({ message: 'Unable to add category.', error: error.message });
@@ -364,7 +409,7 @@ app.post('/api/products', async (req, res) => {
 
   try {
     const result = await run(
-      `INSERT INTO products (name, category, price, stock, unit, supplier, reorderLevel, sold, updated, icon, tone, expirationDate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO products (name, category, price, stock, unit, supplier, reorderLevel, sold, updated, icon, tone, expirationDate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       [product.name, product.category, product.price, product.stock, product.unit, product.supplier, product.reorderLevel, product.sold, product.updated, product.icon, product.tone, product.expirationDate]
     );
 
@@ -432,6 +477,10 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Tindahan backend running on http://localhost:${PORT}`);
-});
+export default app;
+
+if (!process.env.VERCEL) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Tindahan backend running on http://localhost:${PORT}`);
+  });
+}

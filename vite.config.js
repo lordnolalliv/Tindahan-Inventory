@@ -11,4 +11,9 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    outDir: 'public',
+    emptyOutDir: false,
+    copyPublicDir: false,
+  },
 });
