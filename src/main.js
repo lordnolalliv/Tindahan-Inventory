@@ -111,7 +111,7 @@ document.querySelector('#app').innerHTML = `
       <form id="login-form" class="login-form">
         <label id="auth-name-field" hidden>Full name<input name="name" autocomplete="name" placeholder="e.g. Maria Reyes" /></label>
         <label>Email<input name="email" type="email" autocomplete="email" value="${import.meta.env.DEV ? 'maria@tindahan.local' : ''}" required /></label>
-        <label>Password<input name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required /></label>
+        <label>Password<div class="password-input-wrap"><input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required /><button class="password-toggle" id="password-toggle" type="button" aria-label="Show password" aria-pressed="false" title="Show password"><span class="password-eye" aria-hidden="true"></span></button></div></label>
         <p class="auth-error" id="auth-error" role="alert"></p>
         <button class="primary-button" type="submit">Log in</button>
       </form>
@@ -179,6 +179,20 @@ $('#auth-toggle').addEventListener('click', () => {
   $('#login-form input[name="name"]').value = ''
   $('#login-form input[name="email"]').value = registering || !import.meta.env.DEV ? '' : 'maria@tindahan.local'
   $('#login-form input[name="password"]').value = ''
+  $('#auth-password').type = 'password'
+  $('#password-toggle').setAttribute('aria-label', 'Show password')
+  $('#password-toggle').setAttribute('title', 'Show password')
+  $('#password-toggle').setAttribute('aria-pressed', 'false')
+})
+
+$('#password-toggle').addEventListener('click', () => {
+  const passwordInput = $('#auth-password')
+  const showPassword = passwordInput.type === 'password'
+  passwordInput.type = showPassword ? 'text' : 'password'
+  $('#password-toggle').setAttribute('aria-label', showPassword ? 'Hide password' : 'Show password')
+  $('#password-toggle').setAttribute('title', showPassword ? 'Hide password' : 'Show password')
+  $('#password-toggle').setAttribute('aria-pressed', String(showPassword))
+  passwordInput.focus()
 })
 
 $('#login-form').addEventListener('submit', async event => {
