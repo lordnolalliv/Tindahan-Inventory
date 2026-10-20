@@ -111,7 +111,7 @@ document.querySelector('#app').innerHTML = `
       <form id="login-form" class="login-form">
         <label id="auth-name-field" hidden>Full name<input name="name" autocomplete="name" placeholder="e.g. Maria Reyes" /></label>
         <label>Email<input name="email" type="email" autocomplete="email" value="${import.meta.env.DEV ? 'maria@tindahan.local' : ''}" required /></label>
-        <label>Password<div class="password-input-wrap"><input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required /><button class="password-toggle" id="password-toggle" type="button" aria-label="Show password" aria-pressed="false" title="Show password"><span class="password-eye" aria-hidden="true"></span></button></div></label>
+        <label>Password<div class="password-input-wrap"><input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required /><button class="password-toggle" id="password-toggle" type="button" aria-label="Show password" aria-pressed="false" title="Show password"><svg class="password-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12s3.5-7 9.75-7 9.75 7 9.75 7-3.5 7-9.75 7-9.75-7-9.75-7Z"/><circle cx="12" cy="12" r="3"/><path class="password-eye-slash" d="m4 4 16 16"/></svg></button></div></label>
         <p class="auth-error" id="auth-error" role="alert"></p>
         <button class="primary-button" type="submit">Log in</button>
       </form>

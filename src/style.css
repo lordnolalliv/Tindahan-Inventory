@@ -36,9 +36,9 @@ button { border: 0; cursor: pointer; }
 .password-input-wrap input { padding-right: 44px; }
 .password-toggle { position: absolute; top: 50%; right: 10px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; color: #788394; background: transparent; border-radius: 6px; transform: translateY(-50%); }
 .password-toggle:hover, .password-toggle:focus-visible { color: #354b63; background: #eef3f8; outline: none; }
-.password-eye { position: relative; display: block; width: 16px; height: 12px; border: 1.6px solid currentColor; border-radius: 75% 15%; transform: rotate(45deg) scale(.9); }
-.password-eye::after { content: ''; position: absolute; top: 3px; left: 5px; width: 4px; height: 4px; border: 1px solid currentColor; border-radius: 50%; background: currentColor; }
-.password-toggle[aria-pressed="true"] .password-eye::before { content: ''; position: absolute; top: 4px; left: -3px; z-index: 1; width: 20px; border-top: 1.6px solid currentColor; transform: rotate(-45deg); }
+.password-eye { display: block; width: 19px; height: 19px; }
+.password-eye-slash { display: none; }
+.password-toggle[aria-pressed="true"] .password-eye-slash { display: block; }
 @media (max-width: 900px) { .sidebar { width: 205px; }.topbar, .page-heading, .stats-grid, .inventory-section { padding-left: 24px; padding-right: 24px; }.date-label { display: none; }.stats-grid { grid-template-columns: repeat(2, 1fr); }th, td { padding: 0 10px; }.updated { display: none; } }
 @media (max-width: 680px) { .shell { display: block; }.sidebar { width: 100%; height: auto; padding: 15px; border-right: 0; border-bottom: 1px solid var(--line); }.brand { padding: 0 0 14px; }.shop-switcher { display: none; }.nav { display: flex; gap: 4px; }.nav-item { padding: 8px 10px; }.sidebar-footer { display: none; }.topbar { height: 58px; padding: 0 18px; }.page-heading { display: block; padding: 28px 18px 23px; }.page-heading .primary-button { margin-top: 20px; }.stats-grid { padding: 0 18px; gap: 9px; margin-bottom: 28px; }.stat-card { padding: 12px; }.stat-card > strong { font-size: 17px; }.inventory-section { padding: 0 18px 30px; }.toolbar { align-items: stretch; flex-wrap: wrap; gap: 8px; }.search-box { width: 100%; }.filters { order: 2; overflow-x: auto; flex-wrap: nowrap; width: calc(100% - 40px); }.filter { white-space: nowrap; }.filter-icon { order: 2; }.table-wrap { overflow-x: auto; }table { min-width: 820px; }.section-heading { align-items: center; }.form-grid { grid-template-columns: 1fr; }.modal { padding: 19px; } }
 .row-actions { white-space: nowrap; }
